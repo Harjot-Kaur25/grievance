@@ -1,7 +1,7 @@
 import io
 from contextlib import asynccontextmanager
 import pandas as pd
-from fastapi import FastAPI, Depends, UploadFile, File, HTTPException, Query, Request
+from fastapi import FastAPI, Depends, UploadFile, File, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
@@ -24,7 +24,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Grievance Priority API", version="1.0", lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"], expose_headers=["*"])
 
 
 def get_predictor(request: Request) -> Predictor:
@@ -45,7 +45,7 @@ def counts(s: pd.Series, top=None):
 
 @app.get("/health")
 def health(request: Request):
-    return {"status": "ok", "model_loaded": request.app.state.predictor is not None}
+    return {"status": "ok", "model_loaded": getattr(request.app.state, "predictor", None) is not None}
 
 
 @app.get("/options")
@@ -151,10 +151,18 @@ def hotspots(limit: int = Query(20, ge=1, le=200), min_complaints: int = Query(1
 
 
 @app.get("/complaints")
-def complaints(limit: int = Query(50, ge=1, le=500), priority: str | None = None, ward: str | None = None,
-               db: Session = Depends(get_db)):
+def complaints(response: Response, limit: int = Query(50, ge=1, le=500), offset: int = Query(0, ge=0),
+               priority: str | None = None, ward: str | None = None, status: str | None = None,
+               search: str | None = None, db: Session = Depends(get_db)):
     q = db.query(Complaint)
     if priority: q = q.filter(Complaint.priority == priority)
     if ward: q = q.filter(Complaint.ward == ward)
-    rows = q.order_by(Complaint.id.desc()).limit(limit).all()
+    if status: q = q.filter(Complaint.status == status)
+    if search:
+        s = f"%{search.strip()}%"
+        from sqlalchemy import or_
+        q = q.filter(or_(Complaint.sub_category.ilike(s), Complaint.staff_remarks.ilike(s), Complaint.ward.ilike(s)))
+    total_count = q.count()
+    response.headers["X-Total-Count"] = str(total_count)
+    rows = q.order_by(Complaint.id.desc()).offset(offset).limit(limit).all()
     return [{c.name: getattr(r, c.name) for c in Complaint.__table__.columns} for r in rows]

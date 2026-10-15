@@ -1,5 +1,9 @@
 import joblib, numpy as np, pandas as pd, shap
 from scipy import sparse
+import sklearn.compose._column_transformer as _ct
+if not hasattr(_ct, "_RemainderColsList"):
+    class _RemainderColsList(list): pass
+    _ct._RemainderColsList = _RemainderColsList
 
 
 class Predictor:
